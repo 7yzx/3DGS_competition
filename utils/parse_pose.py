@@ -3,7 +3,8 @@ import os
 import time
 import numpy as np
 import time
-from read_write_model import rotmat2qvec, qvec2rotmat
+from read_write_model import rotmat2qvec, qvec2rotmat, Camera, write_cameras_text, write_images_text, write_points3D_text, Image
+
 from video import parse_video, parse_video2
 
 import open3d as o3d
@@ -24,7 +25,7 @@ def _parse_cameras(cam_file):
                 continue
             cam_id = int(parts[0])
             model = parts[1]
-            height, width = int(parts[2]), int(parts[3])
+            width, height = int(parts[2]), int(parts[3])
             fx, fy, cx, cy = map(float, parts[4:8])
             dist = list(map(float, parts[8:]))  # 畸变系数
             cameras[cam_id] = {
@@ -32,6 +33,7 @@ def _parse_cameras(cam_file):
                 "width": width,
                 "height": height,
                 "fx": fx, "fy": fy, "cx": cx, "cy": cy,
+                "params": np.array([fx, fy, cx, cy], dtype=np.float32),
                 "distortion": dist
             }
     return cameras
@@ -60,15 +62,6 @@ def _parse_images(img_file):
             mat4x4 = np.eye(4)
             mat4x4[:3, :3] = R
             mat4x4[:3, 3] = T
-            # mat4x4 = parts[10:]
-            # if len(parts) > 10:
-            #     # 有的 images.txt 可能把 timestamp 和 mat4x4 也放一行
-            #     # 简单提取一下
-            #     try:
-            #         timestamp = parts[10]
-            #     except:
-            #         pass
-            # 存储
             images[image_id] = {
                 "qvec": np.array([qw, qx, qy, qz]),
                 "tvec": np.array([tx, ty, tz]),
@@ -97,11 +90,55 @@ def _parse_points3D(pts_file):
             r, g, b = map(int, parts[4:7])
             error = float(parts[7])
             points3D[pid] = {
+                "id": pid,
                 "xyz": np.array([x, y, z]),
                 "rgb": (r, g, b),
                 "error": error
             }
     return points3D
+
+
+
+def save_to_colmap(camera_o, images_o, points3D_o, sparse_dir):
+
+    cameras = {}
+    width = camera_o[0]["width"]
+    height = camera_o[0]["height"]
+    params = camera_o[0]["params"]
+    camera_id = 1 
+    cameras[camera_id] = Camera(
+                    id=camera_id,
+                    model="PINHOLE",
+                    width=width,
+                    height=height,
+                    params=params,
+                )
+    camera_txt_path = os.path.join(sparse_dir, "cameras.txt")
+    write_cameras_text(cameras, camera_txt_path)
+    
+    images = {}
+    
+    for i, img in enumerate(images_o.values()):
+        image = Image(
+            id=i+1,
+            qvec=img["qvec"],
+            tvec=img["tvec"],
+            camera_id=1,
+            name=img["name"],
+            xys=np.zeros((0, 2)),
+            point3D_ids=np.array([], dtype=int)
+        )
+        images[i+1] = image
+
+    images_txt_path = os.path.join(sparse_dir, "images.txt")
+    write_images_text(images, images_txt_path)
+            
+    # # 创建points3D.txt
+    # points3D_txt_path = os.path.join(sparse_dir, "points3D.txt")
+    # write_points3D_text(points3D_o, points3D_txt_path)
+    
+    
+
 
 def save_points3D_to_ply(points3D, ply_path):
     # 提取坐标和颜色
@@ -141,24 +178,28 @@ if __name__ == "__main__":
     dataset_names = sorted([f for f in os.listdir(base_dir)])
     test_num = 10
     for i, name in enumerate(dataset_names):
-        if i == test_num:
-            break
+        # if i == test_num:
+        #     break
 
         start_time = time.time()
         dataset_path = os.path.join(base_dir, name)
         video_path = os.path.join(dataset_path, f"{name}_flip.mp4")
         video_info_path = os.path.join(dataset_path, "inputs", "videoInfo.txt")
-        output_dir = os.path.join(dataset_path, "frames")
+        # output_dir = os.path.join(dataset_path, "frames")
+        output_dir = dataset_path
+        sparse_dir = os.path.join(output_dir, "sparse", "0")
+        os.makedirs(sparse_dir, exist_ok=True)
         slam_dir = os.path.join(dataset_path, "inputs", "slam")
 
-        camera, images, points3D = parse_slam(slam_dir)
-        imagelist = [img["name"] for img in images.values()]
-        parse_video2(video_path, video_info_path, output_dir, camera, imagelist)
+        camera_o, images_o, points3D_o = parse_slam(slam_dir)
+        imagelist = [img["name"] for img in images_o.values()]
+        parse_video2(video_path, video_info_path, output_dir, camera_o, imagelist)
+        
+        save_to_colmap(camera_o, images_o, points3D_o, sparse_dir)
+        
         end_time = time.time()
         
-        
-        
-        save_points3D_to_ply(points3D, os.path.join(dataset_path, "points3D.ply"))
+        save_points3D_to_ply(points3D_o, os.path.join(sparse_dir, "points3D.ply"))
         print(f"parse slam file: {name}, 用时: {end_time - start_time:.2f} 秒")
         
         

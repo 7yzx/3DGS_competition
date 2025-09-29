@@ -59,7 +59,7 @@ def _parse_videoinfo(video_info_path):
                 frameid_to_timestamp[frame_id] = timestamp
     return frameid_to_timestamp
                 
-def parse_video2(video_path, video_info_path, output_dir, camera, needed_images=None):
+def parse_video2(video_path, video_info_path, output_dir, camera, needed_images=None, undistort=False, downsample=True):
     """
     从视频中提取指定帧并保存为图片，图片命名为时间戳。
     
@@ -68,17 +68,26 @@ def parse_video2(video_path, video_info_path, output_dir, camera, needed_images=
     video_info_path: 包含帧ID和时间戳的文本文件路径
     output_dir: 输出图片的文件夹路径
     """
-    dist = np.array(camera["distortion"], dtype=np.float32)
+    dist = np.array(camera[0]["distortion"], dtype=np.float32)
 
     K = np.array([
-        [camera["fx"], 0, camera["cx"]],
-        [0, camera["fy"], camera["cy"]],
+        [camera[0]["fx"], 0, camera[0]["cx"]],
+        [0, camera[0]["fy"], camera[0]["cy"]],
         [0, 0, 1]
     ], dtype=np.float32)
     
+    resize_w, resize_h = 480, 640
+    scale_x = resize_w / camera[0]["width"]
+    scale_y = resize_h / camera[0]["height"]
+    
     
     # 创建输出文件夹
-    os.makedirs(output_dir, exist_ok=True)
+    frame_dir = os.path.join(output_dir, "frames")
+    os.makedirs(frame_dir, exist_ok=True)
+    
+    images_2_dir = os.path.join(output_dir, "images_2")
+    os.makedirs(images_2_dir, exist_ok=True)
+    
     frameid_to_timestamp = _parse_videoinfo(video_info_path)
     needed_ts_set = set([img.replace(".jpg","") for img in needed_images])
 
@@ -94,11 +103,18 @@ def parse_video2(video_path, video_info_path, output_dir, camera, needed_images=
             ts = frameid_to_timestamp[frame_id]
             if ts in needed_ts_set:
                 # 去畸变
-                # undistorted = cv2.undistort(frame, K, dist)
-                # 保存
-                save_path = os.path.join(output_dir, f"{ts}.jpg")
-                # cv2.imwrite(save_path, undistorted)
-                cv2.imwrite(os.path.join(output_dir, f"{ts}.jpg"), frame)
+                if undistort:
+                    frame = cv2.undistort(frame, K, dist)
+                if downsample:
+                    frame = cv2.resize(frame, fx=scale_x, fy=scale_y,dsize=(resize_w, resize_h))
+                    save_path = os.path.join(images_2_dir, f"{ts}.jpg")
+                    cv2.imwrite(save_path, frame)
+                else:
+                    # undistorted = cv2.undistort(frame, K, dist)
+                    # 保存
+                    save_path = os.path.join(output_dir, f"{ts}.jpg")
+                    # cv2.imwrite(save_path, undistorted)
+                    cv2.imwrite(save_path, frame)
                 
     cap.release()
 
@@ -115,7 +131,8 @@ if __name__ == "__main__":
         dataset_path = os.path.join(base_dir, name)
         video_path = os.path.join(dataset_path, f"{name}_flip.mp4")
         video_info_path = os.path.join(dataset_path, "inputs", "videoInfo.txt")
-        output_dir = os.path.join(dataset_path, "frames")
+        # output_dir = os.path.join(dataset_path, "frames")
+        output_dir = dataset_path
 
         parse_video(video_path, video_info_path, output_dir)
         
